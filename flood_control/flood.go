@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -21,6 +22,7 @@ type FloodManager struct {
 	DB *sql.DB
 	N  int64
 	K  int
+	mu *sync.RWMutex
 }
 
 var (
@@ -31,10 +33,7 @@ var (
 
 func InitDBFlood(ctx context.Context) (*FloodManager, error) {
 	fm := &FloodManager{}
-	err := fm.ChekNK()
-	if err != nil {
-		return nil, err
-	}
+	var err error
 	dsn := "root:12345Anast@tcp(localhost:3306)/golang?"
 	dsn += "charset=utf8"
 	dsn += "&interpolateParams=true"
@@ -48,12 +47,15 @@ func InitDBFlood(ctx context.Context) (*FloodManager, error) {
 	if err != nil {
 		return nil, err
 	}
+	fm.mu = &sync.RWMutex{}
 	go fm.DeleteOldSession(ctx)
 
 	return fm, nil
 }
 
 func (fm *FloodManager) Check(ctx context.Context, userID int64) (bool, error) {
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
 	timeNow := time.Now().Unix()
 
 	err := fm.ChekNK()
@@ -62,15 +64,16 @@ func (fm *FloodManager) Check(ctx context.Context, userID int64) (bool, error) {
 	}
 
 	infoU, err := fm.getUserInfo(userID)
-	fmt.Println(infoU)
-	if err == ErrNoAuth {
+
+	if err == nil {
 
 		if (timeNow - infoU.TimeStart) > fm.N {
-			infoU = &InfoUser{
+			infoU = InfoUser{
 				Num:       1,
 				TimeStart: timeNow,
 			}
 			fm.putUserInfo(infoU, userID)
+
 			return false, nil
 		}
 
@@ -80,9 +83,9 @@ func (fm *FloodManager) Check(ctx context.Context, userID int64) (bool, error) {
 
 		infoU.Num++
 
-	} else if err == nil {
+	} else if err == ErrNoAuth {
 
-		infoU = &InfoUser{
+		infoU = InfoUser{
 			Num:       1,
 			TimeStart: timeNow,
 		}
@@ -92,13 +95,14 @@ func (fm *FloodManager) Check(ctx context.Context, userID int64) (bool, error) {
 	return false, err
 }
 
-func (fm *FloodManager) getUserInfo(userID int64) (*InfoUser, error) {
-	infoU := &InfoUser{}
+func (fm *FloodManager) getUserInfo(userID int64) (InfoUser, error) {
+	infoU := InfoUser{}
 	err := fm.DB.
 		QueryRow("SELECT numr, timestart FROM flood WHERE id = ?", userID).
 		Scan(&infoU.Num, &infoU.TimeStart)
+
 	if err != nil {
-		return &InfoUser{}, ErrNoAuth
+		return InfoUser{}, ErrNoAuth
 	}
 
 	return infoU, nil
@@ -168,10 +172,16 @@ func (fm *FloodManager) ChekNK() error {
 	var err error
 	numInit, exists := os.LookupEnv("NFLOOD")
 	if !exists {
+		if fm.N > 0 && fm.K > 0 {
+			return nil
+		}
 		return ErrN
 	}
 	keyInit, exists := os.LookupEnv("KFLOOD")
 	if !exists {
+		if fm.N > 0 && fm.K > 0 {
+			return nil
+		}
 		return ErrK
 	}
 	fm.N, err = strconv.ParseInt(numInit, 10, 64)

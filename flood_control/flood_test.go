@@ -2,7 +2,9 @@ package flood
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 )
 
 var (
@@ -18,7 +20,8 @@ func TestFloodP(t *testing.T) {
 		t.Errorf("%s unexpected error: %#v", "DB err", err)
 	}
 	defer cancel()
-
+	fm.N = 4
+	fm.K = 3
 	{
 		ch, err := fm.Check(ctx, ID1)
 		if err != nil {
@@ -49,14 +52,38 @@ func TestFloodP(t *testing.T) {
 
 	}
 
-}
+	time.Sleep(5 * time.Second)
 
-func TestFloodN(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	_, err := InitDBFlood(ctx)
-	if err != nil {
-		t.Errorf("%s unexpected error: %#v", "DB err", err)
+	{
+		ch, err := fm.Check(ctx, ID1)
+		if err != nil {
+			t.Errorf("unexpected error: %#v", err)
+		}
+		if ch == true {
+			t.Errorf("%s wrong result, expected %#v, got %#v", "Access test (token)", false, ch)
+		}
+
 	}
-	defer cancel()
 
+	{
+		wg := &sync.WaitGroup{}
+
+		for i := 0; i < 5; i++ {
+
+			wg.Add(1)
+			go func(wg *sync.WaitGroup) {
+				fm.Check(ctx, ID3)
+				wg.Done()
+			}(wg)
+
+		}
+		wg.Wait()
+		ch, err := fm.Check(ctx, ID3)
+		if err != nil {
+			t.Errorf("unexpected error: %#v", err)
+		}
+		if ch != true {
+			t.Errorf("wrong result, expected %#v, got %#v", true, ch)
+		}
+	}
 }
