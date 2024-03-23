@@ -2,9 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
+	flood "task/flood_control"
 )
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := flood.InitDBFlood(ctx)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer cancel()
 
 }
 
